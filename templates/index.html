@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cycling Data Video Generator</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; background: #f8f9fa; color: #333; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
+        h1, h2 { color: #0056b3; }
+        .container { background: #fff; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .step { margin-bottom: 2rem; border-bottom: 1px solid #eee; padding-bottom: 1.5rem; }
+        label { font-weight: bold; display: block; margin-bottom: 0.5rem; }
+        input[type="file"] { border: 1px solid #ccc; padding: 0.5rem; border-radius: 4px; }
+        button { background-color: #007bff; color: white; padding: 0.75rem 1.5rem; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; transition: background-color 0.2s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        #plot-container { min-height: 350px; border: 1px solid #ddd; border-radius: 4px; }
+        .time-display { display: flex; gap: 2rem; margin-top: 1rem; font-family: monospace; font-size: 1.1rem; }
+        #status-area { margin-top: 1rem; background-color: #e9ecef; padding: 1rem; border-radius: 4px; }
+        #progress-bar-container { width: 100%; background-color: #ddd; border-radius: 4px; overflow: hidden; }
+        #progress-bar { width: 0%; height: 20px; background-color: #28a745; text-align: center; line-height: 20px; color: white; transition: width 0.3s ease; }
+        #download-link { display: none; margin-top: 1rem; font-weight: bold; font-size: 1.2rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Cycling Data Video Generator</h1>
+        
+        <div class="step">
+            <h2>1. Load TCX Data File</h2>
+            <input type="file" id="tcx-file-input" accept=".tcx">
+        </div>
+
+        <div class="step">
+            <h2>2. Select Time Range</h2>
+            <p>The graph will appear here after you load a file. Zoom and pan on the graph to select your desired range.</p>
+            <div id="plot-container"></div>
+            <div class="time-display">
+                <div><strong>Start:</strong> <span id="start-time-display">-</span></div>
+                <div><strong>End:</strong> <span id="end-time-display">-</span></div>
+            </div>
+        </div>
+        
+        <div class="step">
+            <h2>3. Generate Video</h2>
+            <button id="generate-btn" disabled>Generate Video</button>
+            <div id="status-area" style="display: none;">
+                <div id="status-message"></div>
+                <div id="progress-bar-container">
+                    <div id="progress-bar">0%</div>
+                </div>
+                <a href="#" id="download-link" target="_blank">Download Video</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const fileInput = document.getElementById('tcx-file-input');
+        const plotContainer = document.getElementById('plot-container');
+        const generateBtn = document.getElementById('generate-btn');
+        const startTimeDisplay = document.getElementById('start-time-display');
+        const endTimeDisplay = document.getElementById('end-time-display');
+        const statusArea = document.getElementById('status-area');
+        const statusMessage = document.getElementById('status-message');
+        const progressBar = document.getElementById('progress-bar');
+        const downloadLink = document.getElementById('download-link');
+
+        // --- App State ---
+        let appState = {
+            tcxFilePath: null,
+            startTime: null,
+            endTime: null,
+            jobId: null,
+            isGenerating: false,
+        };
+
+        // --- Event Listeners ---
+        fileInput.addEventListener('change', handleFileUpload);
+        generateBtn.addEventListener('click', startGeneration);
+
+        // --- Functions ---
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            setUiLoading(true, "Parsing and plotting TCX file...");
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Unknown error occurred.');
+                }
+                
+                appState.tcxFilePath = data.filepath;
+                plotData(data.times, data.power);
+
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+                resetUi();
+            } finally {
+                setUiLoading(false);
+            }
+        }
+
+        function plotData(times, power) {
+            const trace = {
+                x: times,
+                y: power,
+                type: 'scatter',
+                mode: 'lines',
+                line: { color: '#007bff', width: 2 }
+            };
+
+            const layout = {
+                title: 'Power vs. Time',
+                xaxis: { title: 'Time' },
+                yaxis: { title: 'Power (W)' },
+                margin: { l: 50, r: 30, b: 50, t: 50 }
+            };
+
+            Plotly.newPlot(plotContainer, [trace], layout, {responsive: true});
+
+            // Listen for zoom/pan events to update the selected time range
+            plotContainer.on('plotly_relayout', (eventData) => {
+                let newStart, newEnd;
+
+                // Case 1: Start and end points are provided individually (most common for zoom/pan)
+                if (eventData['xaxis.range[0]'] && eventData['xaxis.range[1]']) {
+                    newStart = eventData['xaxis.range[0]'];
+                    newEnd = eventData['xaxis.range[1]'];
+                } 
+                // Case 2: A single array with start and end is provided
+                else if (eventData['xaxis.range']) {
+                    newStart = eventData['xaxis.range'][0];
+                    newEnd = eventData['xaxis.range'][1];
+                } 
+                // Case 3: The view was reset (e.g., by double-clicking)
+                else if (eventData['xaxis.autorange']) {
+                    newStart = times[0];
+                    newEnd = times[times.length - 1];
+                } 
+                // If no relevant range info is in the event, do nothing
+                else {
+                    return;
+                }
+
+                updateSelectedRange(newStart, newEnd);
+            });
+            
+            // Set initial range
+            updateSelectedRange(times[0], times[times.length - 1]);
+        }
+
+        function updateSelectedRange(start, end) {
+            // FIX: The string from Plotly (e.g., "2025-10-07 17:02:14") is parsed
+            // by default as local time. We must force it to be parsed as UTC.
+            const startStr = String(start).includes('T') ? String(start) : String(start).replace(' ', 'T') + 'Z';
+            const endStr = String(end).includes('T') ? String(end) : String(end).replace(' ', 'T') + 'Z';
+
+            appState.startTime = new Date(startStr).toISOString();
+            appState.endTime = new Date(endStr).toISOString();
+            
+            // Format for display (remove T, Z, and milliseconds)
+            const format = (dateStr) => dateStr.replace('T', ' ').split('.')[0];
+            startTimeDisplay.textContent = format(appState.startTime);
+            endTimeDisplay.textContent = format(appState.endTime);
+            
+            generateBtn.disabled = appState.isGenerating;
+        }
+
+        async function startGeneration() {
+            setUiLoading(true, "Starting generation...");
+            
+            const payload = {
+                filepath: appState.tcxFilePath,
+                startTime: appState.startTime,
+                endTime: appState.endTime,
+            };
+
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+                
+                if (!response.ok) throw new Error(data.error);
+
+                appState.jobId = data.jobId;
+                pollStatus(); // Start checking the status
+
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+                resetUi();
+            }
+        }
+
+        function pollStatus() {
+            const interval = setInterval(async () => {
+                if (!appState.jobId) {
+                    clearInterval(interval);
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/status/${appState.jobId}`);
+                    const data = await response.json();
+
+                    statusMessage.textContent = data.message || `Status: ${data.status}`;
+                    progressBar.style.width = `${data.progress || 0}%`;
+                    progressBar.textContent = `${data.progress || 0}%`;
+
+                    if (data.status === 'complete') {
+                        clearInterval(interval);
+                        setUiLoading(false);
+                        downloadLink.href = `/download/${data.filename}`;
+                        downloadLink.textContent = `Download ${data.filename}`;
+                        downloadLink.style.display = 'block';
+                        statusMessage.textContent = "Generation complete!";
+                    } else if (data.status === 'error') {
+                        clearInterval(interval);
+                        setUiLoading(false);
+                        statusMessage.textContent = `Error: ${data.message}`;
+                        progressBar.style.backgroundColor = '#dc3545'; // Red for error
+                    }
+                } catch (error) {
+                    clearInterval(interval);
+                    setUiLoading(false);
+                    statusMessage.textContent = 'Error fetching status.';
+                }
+            }, 1000); // Poll every second
+        }
+
+        function setUiLoading(isLoading, message = '') {
+            appState.isGenerating = isLoading;
+            generateBtn.disabled = isLoading;
+            fileInput.disabled = isLoading;
+            
+            if (isLoading) {
+                statusArea.style.display = 'block';
+                downloadLink.style.display = 'none';
+                progressBar.style.backgroundColor = '#28a745';
+                statusMessage.textContent = message;
+                progressBar.style.width = '0%';
+                progressBar.textContent = '0%';
+            }
+        }
+
+        function resetUi() {
+            setUiLoading(false);
+            appState = { tcxFilePath: null, startTime: null, endTime: null, jobId: null, isGenerating: false };
+            plotContainer.innerHTML = '<p>The graph will appear here after you load a file. Zoom and pan on the graph to select your desired range.</p>';
+            startTimeDisplay.textContent = '-';
+            endTimeDisplay.textContent = '-';
+        }
+
+    </script>
+</body>
+</html>

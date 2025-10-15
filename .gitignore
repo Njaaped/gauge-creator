@@ -1,0 +1,12 @@
+
+
+
+generated_videos/
+uploads/
+__pycache__/
+venv/
+.repo-to-text-settings.yaml
+
+
+.DS_Store
+Thumbs.db
