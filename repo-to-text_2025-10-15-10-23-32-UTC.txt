@@ -1,0 +1,1142 @@
+<repo-to-text>
+Directory: GUIapplicatioon
+
+Directory Structure:
+<directory_structure>
+.
+├── .gitignore
+├── README.md
+├── app.py
+├── app_ui.py
+│   ├── assets/CartoonVibes-Regular.otf
+│   ├── assets/heart.png
+│   └── assets/lightning.png
+├── backend_logic.py
+├── gauge_generator.py
+├── graph_widget.py
+├── main.py
+├── requirements.txt
+│   └── templates/index.html
+</directory_structure>
+
+<content full_path="requirements.txt">
+Flask==3.0.3
+lxml==5.2.2
+numpy
+Pillow
+opencv-python
+pyqt6
+pyqtgraph
+</content>
+
+<content full_path="app_ui.py">
+# app_ui.py
+# This file defines the main application window (QMainWindow),
+# handles all GUI elements, layouts, signal/slot connections,
+# and manages the worker thread for video generation.
+
+import sys
+import os
+from datetime import datetime
+
+# Import the new custom graph widget
+from graph_widget import GraphWidget
+
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                             QPushButton, QLineEdit, QFileDialog, QLabel,
+                             QGridLayout, QGroupBox, QComboBox, QMessageBox,
+                             QDateTimeEdit, QApplication)
+from PyQt6.QtCore import QDateTime, Qt, QThread, QObject, pyqtSignal
+from PyQt6.QtGui import QFont
+
+# Import backend functions
+import backend_logic
+import gauge_generator
+
+# --- Worker for Threaded Video Generation (Now Simplified) ---
+class GenerationWorker(QObject):
+    """
+    A worker object that runs in a separate thread. It now simply calls the
+    centralized backend orchestrator function to do the heavy lifting.
+    """
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+    progress = pyqtSignal(int, str)
+
+    def __init__(self, tcx_data, start_time, end_time, output_path):
+        super().__init__()
+        self.tcx_data = tcx_data
+        self.start_time = start_time
+        self.end_time = end_time
+        self.output_path = output_path
+
+    def run(self):
+        """The main work method now delegates to the backend orchestrator."""
+        try:
+            # Single call to the new, centralized logic.
+            # We pass self.progress.emit directly as the callback function.
+            final_path = backend_logic.orchestrate_video_generation(
+                self.tcx_data, self.start_time, self.end_time, self.output_path, self.progress.emit
+            )
+            self.finished.emit(final_path)
+        except Exception as e:
+            self.error.emit(f"An error occurred during generation: {e}")
+
+
+# --- Main Application Window (UI setup is unchanged) ---
+class MainWindow(QMainWindow):
+    """Main application window class."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Cycling Data Video Generator")
+        self.setGeometry(100, 100, 900, 700)
+
+        # --- Instance variables ---
+        self.tcx_path = None
+        self.tcx_metadata = {}
+        self.generation_thread = None
+        self.generation_worker = None
+
+        # --- Main Layout ---
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        self.main_layout = QVBoxLayout(main_widget)
+
+        # --- Initialize UI components ---
+        self._create_file_input_group()
+        self._create_graph_and_time_group()
+        self._create_generation_group()
+
+        self.update_ui_state()
+
+    def _create_file_input_group(self):
+        """Creates the file loading section of the UI."""
+        group = QGroupBox("1. Load Data File")
+        layout = QGridLayout()
+
+        self.load_tcx_btn = QPushButton("Load TCX File")
+        self.load_tcx_btn.clicked.connect(self.load_tcx)
+        self.tcx_path_display = QLineEdit("No TCX file loaded")
+        self.tcx_path_display.setReadOnly(True)
+
+        layout.addWidget(self.load_tcx_btn, 0, 0)
+        layout.addWidget(self.tcx_path_display, 0, 1)
+
+        group.setLayout(layout)
+        self.main_layout.addWidget(group)
+
+    def _create_graph_and_time_group(self):
+        """Creates the graph for data visualization and time selection."""
+        group = QGroupBox("2. Select Time Range")
+        layout = QVBoxLayout()
+
+        # --- Instantiate the custom GraphWidget ---
+        self.graph_widget = GraphWidget()
+        self.graph_widget.setMinimumHeight(300)
+        # Connect the custom signal to our handler
+        self.graph_widget.regionChanged.connect(self.on_region_changed)
+        layout.addWidget(self.graph_widget)
+
+        # --- Time Edit Fields ---
+        time_edits_layout = QGridLayout()
+        time_edits_layout.addWidget(QLabel("Segment Start Time:"), 0, 0)
+        self.start_time_edit = QDateTimeEdit()
+        self.start_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.start_time_edit.dateTimeChanged.connect(self.update_ui_state)
+        time_edits_layout.addWidget(self.start_time_edit, 0, 1)
+        
+        time_edits_layout.addWidget(QLabel("Segment End Time:"), 1, 0)
+        self.end_time_edit = QDateTimeEdit()
+        self.end_time_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.end_time_edit.dateTimeChanged.connect(self.update_ui_state)
+        time_edits_layout.addWidget(self.end_time_edit, 1, 1)
+        
+        layout.addLayout(time_edits_layout)
+        group.setLayout(layout)
+        self.main_layout.addWidget(group)
+
+    def _create_generation_group(self):
+        """Creates the final video generation action section."""
+        group = QGroupBox("3. Generation")
+        layout = QVBoxLayout()
+
+        style_layout = QHBoxLayout()
+        style_layout.addWidget(QLabel("Dashboard Style:"))
+        self.dashboard_style_combo = QComboBox()
+        self.dashboard_style_combo.addItem("Power Dashboard")
+        style_layout.addWidget(self.dashboard_style_combo)
+        style_layout.addStretch()
+
+        self.generate_btn = QPushButton("Generate Video")
+        self.generate_btn.clicked.connect(self.start_generation)
+        self.status_label = QLabel("Status: Load a TCX file to begin.")
+        self.status_label.setStyleSheet("color: #555;")
+
+        layout.addLayout(style_layout)
+        layout.addWidget(self.generate_btn)
+        layout.addWidget(self.status_label)
+        group.setLayout(layout)
+        self.main_layout.addWidget(group)
+        self.main_layout.addStretch()
+
+    # --- SLOTS / EVENT HANDLERS ---
+    def load_tcx(self):
+        """Opens a file dialog to select a TCX file, parses, and plots it."""
+        path, _ = QFileDialog.getOpenFileName(self, "Load TCX", "", "TCX Files (*.tcx)")
+        if path:
+            self.tcx_path = path
+            self.tcx_path_display.setText(path)
+            self.status_label.setText("Status: Parsing TCX file...")
+            QApplication.processEvents()
+            
+            try:
+                self.tcx_metadata = backend_logic.parse_tcx_file(self.tcx_path)
+                self.status_label.setText("Status: Plotting data...")
+                QApplication.processEvents()
+                self.graph_widget.plot_data(self.tcx_metadata['trackpoints'])
+                self.status_label.setText("Status: TCX file loaded. Drag on the graph to select a range.")
+            except ValueError as e:
+                # Catch the specific ValueError from our backend for better messages
+                self.show_error_message(str(e))
+                self.tcx_metadata = {} # Clear bad data
+            except Exception as e:
+                # Catch any other unexpected errors
+                self.show_error_message(f"An unexpected error occurred: {e}")
+                self.tcx_metadata = {}
+
+        self.update_ui_state()
+
+    def on_region_changed(self, start_timestamp, end_timestamp):
+        """Handler for when the user drags or resizes the selection region."""
+        start_dt = QDateTime.fromSecsSinceEpoch(start_timestamp)
+        end_dt = QDateTime.fromSecsSinceEpoch(end_timestamp)
+
+        self.start_time_edit.blockSignals(True)
+        self.end_time_edit.blockSignals(True)
+        self.start_time_edit.setDateTime(start_dt)
+        self.end_time_edit.setDateTime(end_dt)
+        self.start_time_edit.blockSignals(False)
+        self.end_time_edit.blockSignals(False)
+
+        self.update_ui_state()
+
+    def update_ui_state(self):
+        """Validates inputs and enables/disables the Generate button."""
+        is_valid = True
+        status_message = "Status: Ready."
+
+        if not self.tcx_path or not self.tcx_metadata.get('trackpoints'):
+            is_valid = False
+            status_message = "Status: Please load a valid TCX file."
+        else:
+            segment_start = self.start_time_edit.dateTime().toPyDateTime()
+            segment_end = self.end_time_edit.dateTime().toPyDateTime()
+            if not (segment_start < segment_end):
+                is_valid = False
+                status_message = "Status: Start time must be before end time."
+
+        self.generate_btn.setEnabled(is_valid)
+        if is_valid:
+             self.status_label.setText("Status: Ready to generate video for the selected range.")
+        else:
+             self.status_label.setText(status_message)
+
+    def start_generation(self):
+        """Initiates the video generation process in a separate thread."""
+        output_path, _ = QFileDialog.getSaveFileName(self, "Save Generated Video", "", "MP4 Video (*.mp4)")
+        if not output_path:
+            return
+        if not output_path.lower().endswith('.mp4'):
+            output_path += '.mp4'
+
+        self.generate_btn.setEnabled(False)
+        self.status_label.setText("Status: Starting generation...")
+
+        start_time = self.start_time_edit.dateTime().toPyDateTime()
+        end_time = self.end_time_edit.dateTime().toPyDateTime()
+        tcx_data = self.tcx_metadata['trackpoints']
+        
+        self.generation_thread = QThread()
+        self.generation_worker = GenerationWorker(tcx_data, start_time, end_time, output_path)
+        self.generation_worker.moveToThread(self.generation_thread)
+
+        self.generation_thread.started.connect(self.generation_worker.run)
+        self.generation_worker.finished.connect(self.on_generation_finished)
+        self.generation_worker.error.connect(self.on_generation_error)
+        self.generation_worker.progress.connect(lambda p, m: self.status_label.setText(f"Status: {m} ({p}%)"))
+
+        self.generation_worker.finished.connect(self.generation_thread.quit)
+        self.generation_worker.finished.connect(self.generation_worker.deleteLater)
+        self.generation_thread.finished.connect(self.generation_thread.deleteLater)
+        self.generation_thread.start()
+
+    def on_generation_finished(self, output_path):
+        self.update_ui_state()
+        QMessageBox.information(self, "Success", f"Video generation complete!\nSaved to: {output_path}")
+
+    def on_generation_error(self, error_message):
+        self.update_ui_state()
+        self.show_error_message(error_message)
+
+    def show_error_message(self, message):
+        QMessageBox.critical(self, "Error", message)
+
+    def closeEvent(self, event):
+        if self.generation_thread and self.generation_thread.isRunning():
+            self.generation_thread.quit()
+            self.generation_thread.wait()
+        event.accept()
+</content>
+
+<content full_path="backend_logic.py">
+# backend_logic.py
+# This file contains all non-GUI functions, including parsing
+# TCX files and preparing data for the video generator.
+
+import json
+import os
+from datetime import datetime, timezone
+from lxml import etree
+import gauge_generator # Import for the orchestrator
+
+def parse_tcx_file(tcx_path):
+    """
+    Parses a TCX file to extract trackpoints (time, power, hr, cad, speed).
+    Raises ValueError with a descriptive message on failure.
+    """
+    try:
+        tree = etree.parse(tcx_path)
+    except etree.XMLSyntaxError as e:
+        raise ValueError(f"File is not a valid XML/TCX file. Details: {e}")
+
+    root = tree.getroot()
+
+    # Define the main TCX namespace
+    ns = {'tcx': 'http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2'}
+
+    trackpoints = []
+
+    # Using XPath to find all Trackpoint elements
+    all_tp_nodes = root.xpath('//tcx:Trackpoint', namespaces=ns)
+    if not all_tp_nodes:
+        raise ValueError("TCX file does not contain any Trackpoint data.")
+
+    for tp in all_tp_nodes:
+        time_str_nodes = tp.xpath('tcx:Time/text()', namespaces=ns)
+        if not time_str_nodes:
+            continue
+        time_str = time_str_nodes[0]
+
+        # Use xpath with local-name() to ignore namespaces for extension data
+        power_nodes = tp.xpath(".//*[local-name()='Watts']/text()")
+        power_str = power_nodes[0] if power_nodes else '0'
+
+        hr_nodes = tp.xpath(".//*[local-name()='HeartRateBpm']/*[local-name()='Value']/text()")
+        hr_str = hr_nodes[0] if hr_nodes else '0'
+
+        cad_nodes = tp.xpath('tcx:Cadence/text()', namespaces=ns)
+        cad_str = cad_nodes[0] if cad_nodes else '0'
+        
+        dist_nodes = tp.xpath('tcx:DistanceMeters/text()', namespaces=ns)
+        dist_str = dist_nodes[0] if dist_nodes else None
+
+        # Try parsing datetime with and without fractional seconds
+        time = None
+        try:
+            time = datetime.strptime(time_str, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+        except ValueError:
+            try:
+                time = datetime.strptime(time_str, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+            except ValueError:
+                # If both fail, skip this trackpoint
+                print(f"Warning: Skipping trackpoint with unparsable time: {time_str}")
+                continue
+        
+        trackpoints.append({
+            'time': time,
+            'power': int(power_str or 0),
+            'hr': int(hr_str or 0),
+            'cadence': int(cad_str or 0),
+            'distance': float(dist_str) if dist_str is not None else None
+        })
+
+    if not trackpoints:
+        raise ValueError("Successfully parsed TCX file, but no valid trackpoints with recognized timestamps were found.")
+        
+    # Calculate speed based on distance and time differences
+    for i in range(len(trackpoints)):
+        if i > 0 and trackpoints[i]['distance'] is not None and trackpoints[i-1]['distance'] is not None:
+            dist_delta = trackpoints[i]['distance'] - trackpoints[i-1]['distance']
+            time_delta = (trackpoints[i]['time'] - trackpoints[i-1]['time']).total_seconds()
+            if time_delta > 0:
+                speed_ms = dist_delta / time_delta
+                trackpoints[i]['speed'] = speed_ms
+            else:
+                trackpoints[i]['speed'] = trackpoints[i-1].get('speed', 0)
+        else:
+            trackpoints[i]['speed'] = 0
+
+    start_time = trackpoints[0]['time'].astimezone(None)
+    end_time = trackpoints[-1]['time'].astimezone(None)
+
+    return {
+        'start_time': start_time,
+        'end_time': end_time,
+        'trackpoints': trackpoints
+    }
+
+
+def slice_data_and_save_json(trackpoints, start_time, end_time, output_path):
+    """
+    Filters the trackpoints to a given time range and saves as a JSON file.
+    """
+    
+    # Robustly convert incoming start/end times to aware UTC objects.
+    if start_time.tzinfo is None:
+        start_time_utc = start_time.astimezone().astimezone(timezone.utc)
+    else:
+        start_time_utc = start_time.astimezone(timezone.utc)
+
+    if end_time.tzinfo is None:
+        end_time_utc = end_time.astimezone().astimezone(timezone.utc)
+    else:
+        end_time_utc = end_time.astimezone(timezone.utc)
+
+    sliced_data = []
+    for tp in trackpoints:
+        # The comparison is now a direct, correct comparison of two UTC times.
+        if start_time_utc <= tp['time'] <= end_time_utc:
+            data_point = tp.copy()
+            data_point['time'] = tp['time'].isoformat()
+            sliced_data.append(data_point)
+            
+    with open(output_path, 'w') as f:
+        json.dump(sliced_data, f, indent=2)
+
+    print(f"Sliced data saved to {output_path}")
+
+def orchestrate_video_generation(tcx_data, start_time, end_time, output_path, progress_callback):
+    """
+    Orchestrates the entire video generation process from slicing to completion.
+    This is the single source of truth for the generation logic.
+    
+    Args:
+        tcx_data (list): The list of trackpoint dictionaries.
+        start_time (datetime): The start time for the video segment.
+        end_time (datetime): The end time for the video segment.
+        output_path (str): The final path to save the MP4 video.
+        progress_callback (function): A function to call with progress updates.
+                                      It should accept two arguments: (percentage, message).
+    """
+    # Use a unique name for the temp file to avoid conflicts
+    temp_json_path = f"temp_sliced_data_{os.path.basename(output_path)}.json"
+    
+    try:
+        # 1. Slice the data
+        progress_callback(10, "Slicing TCX data...")
+        slice_data_and_save_json(tcx_data, start_time, end_time, temp_json_path)
+
+        # 2. Generate the video
+        # This nested adapter scales progress from gauge_generator (0-100)
+        # to the remainder of our progress bar (e.g., 20-95).
+        def video_progress_adapter(p, m):
+            scaled_progress = 20 + int((p / 100) * 75) # Scale 0-100 to 20-95
+            progress_callback(scaled_progress, m)
+
+        progress_callback(20, "Generating gauge video frames...")
+        gauge_generator.create_gauge_video(
+            temp_json_path, 
+            output_path, 
+            progress_callback=video_progress_adapter
+        )
+        
+        # 3. Finalize
+        progress_callback(100, "Video generation complete.")
+        return output_path
+
+    finally:
+        # 4. Cleanup
+        if os.path.exists(temp_json_path):
+            os.remove(temp_json_path)
+</content>
+
+<content full_path="app.py">
+# app.py
+import os
+import json
+import uuid
+import threading
+from datetime import datetime
+from flask import Flask, render_template, request, jsonify, send_from_directory
+from werkzeug.utils import secure_filename
+
+# Import your existing logic
+import backend_logic
+import gauge_generator
+
+# --- Flask App Setup ---
+app = Flask(__name__)
+UPLOAD_FOLDER = 'uploads'
+OUTPUT_FOLDER = 'generated_videos'
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['OUTPUT_FOLDER'] = OUTPUT_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# In-memory dictionary to track job status
+job_status = {}
+
+# --- Video Generation Worker (Now Simplified) ---
+def generation_task(job_id, tcx_path, start_time_str, end_time_str):
+    """
+    Runs the video generation in a background thread by calling the 
+    centralized backend orchestrator.
+    """
+    try:
+        # Define a callback that updates the web job status dictionary
+        def progress_callback(progress, message):
+            job_status[job_id]['progress'] = progress
+            job_status[job_id]['message'] = message
+
+        job_status[job_id] = {'status': 'parsing', 'progress': 5, 'message': 'Parsing TCX data...'}
+        tcx_metadata = backend_logic.parse_tcx_file(tcx_path)
+        trackpoints = tcx_metadata['trackpoints']
+
+        # Convert ISO strings from JS to datetime objects
+        start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+        end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+
+        output_filename = f"{job_id}.mp4"
+        output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+
+        # Single call to the new, centralized logic
+        backend_logic.orchestrate_video_generation(
+            trackpoints, start_time, end_time, output_path, progress_callback
+        )
+        
+        job_status[job_id].update({'status': 'complete', 'filename': output_filename})
+        
+    except Exception as e:
+        print(f"Error in job {job_id}: {e}")
+        job_status[job_id] = {'status': 'error', 'message': str(e)}
+
+
+# --- API Endpoints ---
+@app.route('/')
+def index():
+    """Serves the main HTML page."""
+    return render_template('index.html')
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    """Handles TCX file upload, parses it, and returns data for plotting."""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    if file and file.filename.lower().endswith('.tcx'):
+        try:
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+
+            tcx_data = backend_logic.parse_tcx_file(filepath)
+            
+            plot_data = {
+                'times': [tp['time'].isoformat() for tp in tcx_data['trackpoints']],
+                'power': [tp['power'] for tp in tcx_data['trackpoints']],
+                'filepath': filepath
+            }
+            return jsonify(plot_data)
+        except Exception as e:
+            return jsonify({'error': f'Failed to process TCX file: {e}'}), 500
+    return jsonify({'error': 'Invalid file type'}), 400
+
+@app.route('/generate', methods=['POST'])
+def generate_video():
+    """Starts the video generation process in a background thread."""
+    data = request.json
+    tcx_path = data.get('filepath')
+    start_time_str = data.get('startTime')
+    end_time_str = data.get('endTime')
+
+    if not all([tcx_path, start_time_str, end_time_str]):
+        return jsonify({'error': 'Missing required data'}), 400
+
+    job_id = str(uuid.uuid4())
+    job_status[job_id] = {'status': 'starting', 'progress': 0, 'message': 'Initializing...'}
+
+    thread = threading.Thread(target=generation_task, args=(job_id, tcx_path, start_time_str, end_time_str))
+    thread.start()
+
+    return jsonify({'jobId': job_id})
+
+@app.route('/status/<job_id>')
+def get_status(job_id):
+    """Returns the status of a generation job."""
+    status = job_status.get(job_id, {'status': 'not_found'})
+    return jsonify(status)
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    """Serves the generated video file for download."""
+    return send_from_directory(app.config["OUTPUT_FOLDER"], filename, as_attachment=True)
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+</content>
+
+<content full_path="gauge_generator.py">
+# gauge_generator.py
+import os
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+import cv2
+import json
+from datetime import datetime
+
+# --- Absolute Path Setup ---
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ==============================================================================
+# Helper functions (Unchanged)
+# ==============================================================================
+def pil_to_cv2(pil_image):
+    return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGBA2BGRA)
+
+def overlay_image_alpha(background, overlay, x, y):
+    x, y = int(x), int(y)
+    h_overlay, w_overlay, _ = overlay.shape
+    y1, y2 = max(0, y), min(background.shape[0], y + h_overlay)
+    x1, x2 = max(0, x), min(background.shape[1], x + w_overlay)
+    overlay_y1, overlay_x1 = max(0, -y), max(0, -x)
+    overlay_y2, overlay_x2 = overlay_y1 + (y2 - y1), overlay_x1 + (x2 - x1)
+    if y2 <= y1 or x2 <= x1: return
+    alpha = overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, 3] / 255.0
+    beta = 1.0 - alpha
+    for c in range(3):
+        background[y1:y2, x1:x2, c] = (alpha * overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, c] +
+                                      beta * background[y1:y2, x1:x2, c])
+
+def draw_text_with_outline_pil(text, font, fill_color, outline_color, stroke_width):
+    dummy_draw = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
+    try:
+        bbox = dummy_draw.textbbox((0, 0), text, font=font)
+    except AttributeError:
+        w, h = dummy_draw.textsize(text, font=font); bbox = (0, 0, w, h)
+    text_w = bbox[2] - bbox[0] + (stroke_width * 2)
+    text_h = bbox[3] - bbox[1] + (stroke_width * 2)
+    img = Image.new('RGBA', (text_w, text_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    x, y = stroke_width - bbox[0], stroke_width - bbox[1]
+    for i in range(-stroke_width, stroke_width + 1):
+        for j in range(-stroke_width, stroke_width + 1):
+            if i*i + j*j >= stroke_width*stroke_width: continue
+            draw.text((x + i, y + j), text, font=font, fill=outline_color)
+    draw.text((x, y), text, font=font, fill=fill_color)
+    return img
+
+# ==============================================================================
+# Main video creation function for the web app
+# ==============================================================================
+def create_gauge_video(json_path, output_path, progress_callback=None):
+    """
+    Reads sliced data and generates video using a caching strategy for high performance.
+    """
+    # --- 1. MASTER CONFIGURATION ---
+    VIDEO_FPS = 30
+    FRAME_WIDTH = 1280
+    FRAME_HEIGHT = 720
+    BODY_WEIGHT_KG = 65.0
+    BG_COLOR_CV = (255, 0, 0)
+    TEXT_FILL_COLOR_PIL = (255, 255, 255, 255)
+    TEXT_OUTLINE_COLOR_PIL = (0, 0, 0, 255)
+    TEXT_OUTLINE_WIDTH = 5
+    FONT_PATH = os.path.join(SCRIPT_DIR, "assets/CartoonVibes-Regular.otf")
+    LIGHTNING_ICON_PATH = os.path.join(SCRIPT_DIR, "assets/lightning.png")
+    HEART_ICON_PATH = os.path.join(SCRIPT_DIR, "assets/heart.png")
+    LAYOUT_START_X = 100
+    LAYOUT_START_Y = 100
+    LINE_SPACING = 30
+    ICON_SPACING = 20
+    ICON_TARGET_HEIGHT = 90
+    LINE_HEIGHT_XL = 130
+    LINE_HEIGHT_L = 100
+    HEART_ANIMATION_STRENGTH = 0.15
+
+    # --- 2. FONT & ICON LOADING ---
+    try:
+        FONT_XL = ImageFont.truetype(FONT_PATH, 120)
+        FONT_L = ImageFont.truetype(FONT_PATH, 90)
+        lightning_icon_orig = Image.open(LIGHTNING_ICON_PATH).convert("RGBA")
+        heart_icon_orig = Image.open(HEART_ICON_PATH).convert("RGBA")
+        def resize_icon(icon, new_height):
+            aspect_ratio = icon.width / icon.height
+            new_width = int(new_height * aspect_ratio)
+            return icon.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        LIGHTNING_ICON = resize_icon(lightning_icon_orig, ICON_TARGET_HEIGHT)
+        HEART_ICON = resize_icon(heart_icon_orig, ICON_TARGET_HEIGHT)
+    except FileNotFoundError as e:
+        raise RuntimeError(f"Asset file not found: {e.filename}.") from e
+
+    # --- 3. DATA LOADING & INTERPOLATION (Unchanged) ---
+    with open(json_path, 'r') as f:
+        trackpoints = json.load(f)
+    if not trackpoints:
+        raise ValueError("Input JSON file is empty.")
+    power = [tp.get('power', 0) for tp in trackpoints]
+    hr = [tp.get('hr', 0) for tp in trackpoints]
+    num_points = len(trackpoints)
+    start_dt, end_dt = datetime.fromisoformat(trackpoints[0]['time']), datetime.fromisoformat(trackpoints[-1]['time'])
+    duration_seconds = (end_dt - start_dt).total_seconds()
+    num_interpolated = int(duration_seconds * VIDEO_FPS) if duration_seconds > 0 else 1
+    interpolated_data = {}
+    orig_x, interp_x = np.linspace(0, num_points - 1, num_points), np.linspace(0, num_points - 1, num_interpolated)
+    interpolated_data['power'] = np.interp(interp_x, orig_x, power)
+    interpolated_data['hr'] = np.interp(interp_x, orig_x, hr)
+    interpolated_data['w_per_kg'] = [(p / BODY_WEIGHT_KG) if BODY_WEIGHT_KG > 0 else 0 for p in interpolated_data['power']]
+
+    # --- 4. FRAME COMPOSITION & VIDEO CREATION (WITH CACHING) ---
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, VIDEO_FPS, (FRAME_WIDTH, FRAME_HEIGHT))
+    if not out.isOpened():
+        raise IOError("Could not open video writer.")
+
+    total_frames = len(interpolated_data['power'])
+    
+    #_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+    #  OPTIMIZATION: Initialize caches
+    text_cache = {}
+    base_frame_cache = {}
+    #_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    for i in range(total_frames):
+        power_val = int(interpolated_data['power'][i])
+        hr_val = int(interpolated_data['hr'][i])
+        w_per_kg_val = interpolated_data['w_per_kg'][i]
+
+        #_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+        #  OPTIMIZATION: Check cache for a pre-rendered base frame
+        cache_key = f"{power_val}-{hr_val}"
+        if cache_key in base_frame_cache:
+            frame_cv = base_frame_cache[cache_key].copy()
+            # Retrieve pre-calculated text image for heart icon placement
+            hr_text_pil = text_cache[f"{hr_val} bpm"]
+        else:
+            # Not in cache, so we render it once
+            frame_cv = np.full((FRAME_HEIGHT, FRAME_WIDTH, 3), BG_COLOR_CV, dtype=np.uint8)
+            current_y = LAYOUT_START_Y
+
+            # --- Power Text ---
+            power_text_str = f"{power_val}W"
+            if power_text_str not in text_cache:
+                text_cache[power_text_str] = draw_text_with_outline_pil(power_text_str, FONT_XL, TEXT_FILL_COLOR_PIL, TEXT_OUTLINE_COLOR_PIL, TEXT_OUTLINE_WIDTH)
+            power_text_pil = text_cache[power_text_str]
+            text_y = current_y + (LINE_HEIGHT_XL - power_text_pil.height) // 2
+            overlay_image_alpha(frame_cv, pil_to_cv2(power_text_pil), LAYOUT_START_X, text_y)
+            icon_x = LAYOUT_START_X + power_text_pil.width + ICON_SPACING
+            icon_y = current_y + (LINE_HEIGHT_XL - LIGHTNING_ICON.height) // 2
+            overlay_image_alpha(frame_cv, pil_to_cv2(LIGHTNING_ICON), icon_x, icon_y)
+            current_y += LINE_HEIGHT_XL + LINE_SPACING
+
+            # --- W/kg Text ---
+            wkg_text_str = f"{w_per_kg_val:.1f} W/kg"
+            if wkg_text_str not in text_cache:
+                text_cache[wkg_text_str] = draw_text_with_outline_pil(wkg_text_str, FONT_L, TEXT_FILL_COLOR_PIL, TEXT_OUTLINE_COLOR_PIL, TEXT_OUTLINE_WIDTH)
+            wkg_text_pil = text_cache[wkg_text_str]
+            text_y = current_y + (LINE_HEIGHT_L - wkg_text_pil.height) // 2
+            overlay_image_alpha(frame_cv, pil_to_cv2(wkg_text_pil), LAYOUT_START_X, text_y)
+            current_y += LINE_HEIGHT_L + LINE_SPACING
+
+            # --- Heart Rate Text (static part) ---
+            hr_text_str = f"{hr_val} bpm"
+            if hr_text_str not in text_cache:
+                text_cache[hr_text_str] = draw_text_with_outline_pil(hr_text_str, FONT_L, TEXT_FILL_COLOR_PIL, TEXT_OUTLINE_COLOR_PIL, TEXT_OUTLINE_WIDTH)
+            hr_text_pil = text_cache[hr_text_str]
+            text_y = current_y + (LINE_HEIGHT_L - hr_text_pil.height) // 2
+            overlay_image_alpha(frame_cv, pil_to_cv2(hr_text_pil), LAYOUT_START_X, text_y)
+            
+            # Save the fully rendered static frame to the cache
+            base_frame_cache[cache_key] = frame_cv.copy()
+        #_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+        # --- Heart Animation (This must be done for every frame as it always changes) ---
+        time_s = i / VIDEO_FPS
+        beat_freq_hz = hr_val / 60.0
+        scale_factor = 1.0 + HEART_ANIMATION_STRENGTH * (np.sin(2 * np.pi * beat_freq_hz * time_s) * 0.5 + 0.5)
+        w, h = HEART_ICON.size
+        beating_heart_pil = HEART_ICON.resize((int(w * scale_factor), int(h * scale_factor)), Image.Resampling.LANCZOS)
+        
+        icon_x = LAYOUT_START_X + hr_text_pil.width + ICON_SPACING
+        icon_y = (LAYOUT_START_Y + LINE_HEIGHT_XL + LINE_SPACING + LINE_HEIGHT_L + LINE_SPACING) + (LINE_HEIGHT_L - beating_heart_pil.height) // 2
+        overlay_image_alpha(frame_cv, pil_to_cv2(beating_heart_pil), icon_x, icon_y)
+
+        out.write(frame_cv)
+
+        if progress_callback and (i + 1) % (VIDEO_FPS * 2) == 0: # Update every 2 seconds
+            percentage = int(((i + 1) / total_frames) * 100)
+            progress_callback(percentage, f"Rendering frame {i + 1}/{total_frames}")
+
+    out.release()
+
+</content>
+
+<content full_path="main.py">
+# main.py
+# This script is the main entry point for the application.
+# Its sole responsibility is to initialize the QApplication and the main window.
+
+import sys
+from PyQt6.QtWidgets import QApplication
+from app_ui import MainWindow
+
+if __name__ == '__main__':
+    # Create the application instance
+    app = QApplication(sys.argv)
+
+    # Create and show the main window
+    window = MainWindow()
+    window.show()
+
+    # Start the application's event loop
+    sys.exit(app.exec())
+
+</content>
+
+<content full_path="graph_widget.py">
+# graph_widget.py
+# This module contains a custom PyQtGraph widget for displaying
+# cycling data and handling interactive range selection.
+
+import pyqtgraph as pg
+from pyqtgraph import DateAxisItem
+from PyQt6.QtCore import pyqtSignal
+
+class GraphWidget(pg.PlotWidget):
+    """
+    A custom plot widget that displays power over time. The user can
+    zoom and pan with the mouse, and the visible range is emitted.
+    """
+    # Signal to emit the selected region's start and end timestamps
+    regionChanged = pyqtSignal(int, int)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(axisItems={'bottom': DateAxisItem()}, *args, **kwargs)
+
+        self.setLabel('left', 'Power (W)')
+        self.setLabel('bottom', 'Time')
+        self.showGrid(x=True, y=True, alpha=0.3)
+        self.setBackground('w') # White background for better visibility
+        self.getPlotItem().getViewBox().setMouseMode(pg.ViewBox.RectMode) # Ensure right-click drag is zoom
+
+        # The line that will display the power data
+        self.power_curve = self.plot(pen=pg.mkPen('b', width=2)) # Blue pen, width 2
+
+        # When the user zooms or pans, the sigXRangeChanged signal is emitted.
+        # We connect that to our internal handler.
+        self.getPlotItem().getViewBox().sigXRangeChanged.connect(self._on_view_changed)
+
+    def plot_data(self, trackpoints):
+        """
+        Updates the plot with new trackpoint data.
+
+        Args:
+            trackpoints (list): A list of trackpoint dictionaries from the backend.
+        """
+        if not trackpoints:
+            self.power_curve.clear()
+            return
+
+        # Convert datetime objects to Unix timestamps for plotting
+        times = [tp['time'].timestamp() for tp in trackpoints]
+        power = [tp['power'] for tp in trackpoints]
+
+        self.power_curve.setData(x=times, y=power)
+        # The view will auto-range, triggering _on_view_changed automatically
+
+    def _on_view_changed(self):
+        """
+        Internal handler that fires when the user zooms or pans.
+        It gets the visible X-axis range and emits the public regionChanged signal.
+        """
+        # .viewRange() returns a list of two lists: [[xmin, xmax], [ymin, ymax]]
+        visible_x_range = self.getPlotItem().getViewBox().viewRange()[0]
+        min_x, max_x = visible_x_range
+        self.regionChanged.emit(int(min_x), int(max_x))
+</content>
+
+<content full_path="templates/index.html">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cycling Data Video Generator</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; background: #f8f9fa; color: #333; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
+        h1, h2 { color: #0056b3; }
+        .container { background: #fff; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .step { margin-bottom: 2rem; border-bottom: 1px solid #eee; padding-bottom: 1.5rem; }
+        label { font-weight: bold; display: block; margin-bottom: 0.5rem; }
+        input[type="file"] { border: 1px solid #ccc; padding: 0.5rem; border-radius: 4px; }
+        button { background-color: #007bff; color: white; padding: 0.75rem 1.5rem; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; transition: background-color 0.2s; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        #plot-container { min-height: 350px; border: 1px solid #ddd; border-radius: 4px; }
+        .time-display { display: flex; gap: 2rem; margin-top: 1rem; font-family: monospace; font-size: 1.1rem; }
+        #status-area { margin-top: 1rem; background-color: #e9ecef; padding: 1rem; border-radius: 4px; }
+        #progress-bar-container { width: 100%; background-color: #ddd; border-radius: 4px; overflow: hidden; }
+        #progress-bar { width: 0%; height: 20px; background-color: #28a745; text-align: center; line-height: 20px; color: white; transition: width 0.3s ease; }
+        #download-link { display: none; margin-top: 1rem; font-weight: bold; font-size: 1.2rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Cycling Data Video Generator</h1>
+        
+        <div class="step">
+            <h2>1. Load TCX Data File</h2>
+            <input type="file" id="tcx-file-input" accept=".tcx">
+        </div>
+
+        <div class="step">
+            <h2>2. Select Time Range</h2>
+            <p>The graph will appear here after you load a file. Zoom and pan on the graph to select your desired range.</p>
+            <div id="plot-container"></div>
+            <div class="time-display">
+                <div><strong>Start:</strong> <span id="start-time-display">-</span></div>
+                <div><strong>End:</strong> <span id="end-time-display">-</span></div>
+            </div>
+        </div>
+        
+        <div class="step">
+            <h2>3. Generate Video</h2>
+            <button id="generate-btn" disabled>Generate Video</button>
+            <div id="status-area" style="display: none;">
+                <div id="status-message"></div>
+                <div id="progress-bar-container">
+                    <div id="progress-bar">0%</div>
+                </div>
+                <a href="#" id="download-link" target="_blank">Download Video</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const fileInput = document.getElementById('tcx-file-input');
+        const plotContainer = document.getElementById('plot-container');
+        const generateBtn = document.getElementById('generate-btn');
+        const startTimeDisplay = document.getElementById('start-time-display');
+        const endTimeDisplay = document.getElementById('end-time-display');
+        const statusArea = document.getElementById('status-area');
+        const statusMessage = document.getElementById('status-message');
+        const progressBar = document.getElementById('progress-bar');
+        const downloadLink = document.getElementById('download-link');
+
+        // --- App State ---
+        let appState = {
+            tcxFilePath: null,
+            startTime: null,
+            endTime: null,
+            jobId: null,
+            isGenerating: false,
+        };
+
+        // --- Event Listeners ---
+        fileInput.addEventListener('change', handleFileUpload);
+        generateBtn.addEventListener('click', startGeneration);
+
+        // --- Functions ---
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            setUiLoading(true, "Parsing and plotting TCX file...");
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Unknown error occurred.');
+                }
+                
+                appState.tcxFilePath = data.filepath;
+                plotData(data.times, data.power);
+
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+                resetUi();
+            } finally {
+                setUiLoading(false);
+            }
+        }
+
+        function plotData(times, power) {
+            const trace = {
+                x: times,
+                y: power,
+                type: 'scatter',
+                mode: 'lines',
+                line: { color: '#007bff', width: 2 }
+            };
+
+            const layout = {
+                title: 'Power vs. Time',
+                xaxis: { title: 'Time' },
+                yaxis: { title: 'Power (W)' },
+                margin: { l: 50, r: 30, b: 50, t: 50 }
+            };
+
+            Plotly.newPlot(plotContainer, [trace], layout, {responsive: true});
+
+            // Listen for zoom/pan events to update the selected time range
+            plotContainer.on('plotly_relayout', (eventData) => {
+                let newStart, newEnd;
+
+                // Case 1: Start and end points are provided individually (most common for zoom/pan)
+                if (eventData['xaxis.range[0]'] && eventData['xaxis.range[1]']) {
+                    newStart = eventData['xaxis.range[0]'];
+                    newEnd = eventData['xaxis.range[1]'];
+                } 
+                // Case 2: A single array with start and end is provided
+                else if (eventData['xaxis.range']) {
+                    newStart = eventData['xaxis.range'][0];
+                    newEnd = eventData['xaxis.range'][1];
+                } 
+                // Case 3: The view was reset (e.g., by double-clicking)
+                else if (eventData['xaxis.autorange']) {
+                    newStart = times[0];
+                    newEnd = times[times.length - 1];
+                } 
+                // If no relevant range info is in the event, do nothing
+                else {
+                    return;
+                }
+
+                updateSelectedRange(newStart, newEnd);
+            });
+            
+            // Set initial range
+            updateSelectedRange(times[0], times[times.length - 1]);
+        }
+
+        function updateSelectedRange(start, end) {
+            // FIX: The string from Plotly (e.g., "2025-10-07 17:02:14") is parsed
+            // by default as local time. We must force it to be parsed as UTC.
+            const startStr = String(start).includes('T') ? String(start) : String(start).replace(' ', 'T') + 'Z';
+            const endStr = String(end).includes('T') ? String(end) : String(end).replace(' ', 'T') + 'Z';
+
+            appState.startTime = new Date(startStr).toISOString();
+            appState.endTime = new Date(endStr).toISOString();
+            
+            // Format for display (remove T, Z, and milliseconds)
+            const format = (dateStr) => dateStr.replace('T', ' ').split('.')[0];
+            startTimeDisplay.textContent = format(appState.startTime);
+            endTimeDisplay.textContent = format(appState.endTime);
+            
+            generateBtn.disabled = appState.isGenerating;
+        }
+
+        async function startGeneration() {
+            setUiLoading(true, "Starting generation...");
+            
+            const payload = {
+                filepath: appState.tcxFilePath,
+                startTime: appState.startTime,
+                endTime: appState.endTime,
+            };
+
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+                
+                if (!response.ok) throw new Error(data.error);
+
+                appState.jobId = data.jobId;
+                pollStatus(); // Start checking the status
+
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+                resetUi();
+            }
+        }
+
+        function pollStatus() {
+            const interval = setInterval(async () => {
+                if (!appState.jobId) {
+                    clearInterval(interval);
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/status/${appState.jobId}`);
+                    const data = await response.json();
+
+                    statusMessage.textContent = data.message || `Status: ${data.status}`;
+                    progressBar.style.width = `${data.progress || 0}%`;
+                    progressBar.textContent = `${data.progress || 0}%`;
+
+                    if (data.status === 'complete') {
+                        clearInterval(interval);
+                        setUiLoading(false);
+                        downloadLink.href = `/download/${data.filename}`;
+                        downloadLink.textContent = `Download ${data.filename}`;
+                        downloadLink.style.display = 'block';
+                        statusMessage.textContent = "Generation complete!";
+                    } else if (data.status === 'error') {
+                        clearInterval(interval);
+                        setUiLoading(false);
+                        statusMessage.textContent = `Error: ${data.message}`;
+                        progressBar.style.backgroundColor = '#dc3545'; // Red for error
+                    }
+                } catch (error) {
+                    clearInterval(interval);
+                    setUiLoading(false);
+                    statusMessage.textContent = 'Error fetching status.';
+                }
+            }, 1000); // Poll every second
+        }
+
+        function setUiLoading(isLoading, message = '') {
+            appState.isGenerating = isLoading;
+            generateBtn.disabled = isLoading;
+            fileInput.disabled = isLoading;
+            
+            if (isLoading) {
+                statusArea.style.display = 'block';
+                downloadLink.style.display = 'none';
+                progressBar.style.backgroundColor = '#28a745';
+                statusMessage.textContent = message;
+                progressBar.style.width = '0%';
+                progressBar.textContent = '0%';
+            }
+        }
+
+        function resetUi() {
+            setUiLoading(false);
+            appState = { tcxFilePath: null, startTime: null, endTime: null, jobId: null, isGenerating: false };
+            plotContainer.innerHTML = '<p>The graph will appear here after you load a file. Zoom and pan on the graph to select your desired range.</p>';
+            startTimeDisplay.textContent = '-';
+            endTimeDisplay.textContent = '-';
+        }
+
+    </script>
+</body>
+</html>
+
+</content>
+
+</repo-to-text>
