@@ -1,21 +1,99 @@
 
-Cycling Data Video Generator 🚴‍♂️💨This project generates dynamic video overlays from cycling .tcx files. It provides both a desktop GUI and a web interface to load a TCX file, select a specific time range from the activity, and create an MP4 video displaying key metrics like power, heart rate, and watts per kilogram.The application is designed with a shared backend, ensuring that both the desktop and web interfaces use the same reliable logic for data parsing and video creation.✨ FeaturesTCX File Parsing: Efficiently parses standard .tcx (Training Center XML) files to extract workout data.Interactive Data Visualization: Plots the entire workout's power data, allowing users to easily zoom and pan to select the perfect segment.Dynamic Video Generation: Creates a high-quality MP4 video with animated data overlays for power, heart rate, and W/kg.Dual Interfaces: Choose the interface that works best for you:🖥️ Desktop App: A native GUI built with PyQt6 for a responsive, local experience.🌐 Web App: A modern web interface built with Flask and Plotly.js for easy access from any browser.Asynchronous Processing: Video generation runs in a background thread to keep the user interface responsive.Shared Core Logic: A centralized backend (backend_logic.py, gauge_generator.py) ensures consistent behavior across both front-ends.🖼️ ScreenshotsHere's a quick look at the two application interfaces and the kind of video output you can expect.Desktop Application (PyQt6)The desktop app provides a simple 3-step process: load your file, select a time range on the graph, and generate the video.``Web Application (Flask)The web app offers the same functionality entirely within your browser, with a clean and modern UI.``Sample Video OutputThe generated video displays your cycling metrics with a custom font and animated icons.``🛠️ Technology StackBackend: PythonCore Libraries:Flask: For the web server and API.lxml: For high-performance XML/TCX parsing.NumPy: For numerical operations and data interpolation.OpenCV-Python: For video frame composition and encoding.Pillow (PIL): For drawing text and manipulating images.Desktop UI: PyQt6, pyqtgraphWeb UI: HTML, CSS, JavaScript, Plotly.js📂 Project StructureThe project is organized with a clear separation between the UI, backend logic, and video generation components..
-├── app.py              # Flask web application entrypoint and API.
-├── app_ui.py           # PyQt6 desktop application UI definition and logic.
-├── backend_logic.py    # Core logic: TCX parsing and data slicing. (Shared)
-├── gauge_generator.py  # Video frame generation and encoding logic. (Shared)
-├── graph_widget.py     # Custom pyqtgraph widget for the desktop app.
-├── main.py             # Main entrypoint to launch the PyQt6 desktop app.
-├── requirements.txt    # Python package dependencies.
+-----
+
+# Cycling Data Video Generator
+
+A web application that takes a `.tcx` file from a cycling computer, visualizes the power data, and generates a dynamic video overlay for a selected time range. This is perfect for sharing highlights of your rides on social media.
+
+This project uses **Flask** for the web backend, **Plotly.js** for interactive graphing, and **OpenCV/Pillow** for video and frame generation.
+
+-----
+
+## Features
+
+  * **TCX File Parsing**: Upload and automatically parse `.tcx` files to extract key metrics like power, heart rate, and cadence.
+  * **Interactive Data Visualization**: View your power data over time on an interactive graph. Zoom and pan to select the exact segment you want to turn into a video.
+  * **Dynamic Video Generation**: Creates an MP4 video file with a "dashboard" overlay showing your power, W/kg, and an animated heart rate icon for the selected time range.
+  * **Web-Based Interface**: Easy-to-use interface that runs entirely in your web browser. No desktop software installation is needed.
+  * **Background Processing**: Video generation runs as a background task, allowing the UI to remain responsive and provide real-time progress updates.
+
+-----
+
+## Final Project Structure
+
+The project has been simplified to contain only the web application components.
+
+```
+.
+├── README.md
+├── app.py                  # Main Flask application and API endpoints
+├── backend_logic.py        # Handles TCX parsing and data processing
+├── gauge_generator.py      # Core logic for creating video frames
+├── requirements.txt        # Python package dependencies
+├── assets/                 # Icons and fonts for the video overlay
+│   ├── CartoonVibes-Regular.otf
+│   ├── heart.png
+│   └── lightning.png
 └── templates/
-    └── index.html      # Single-page HTML file for the Flask web UI.
-🚀 Getting StartedFollow these steps to set up and run the project on your local machine.1. PrerequisitesPython 3.8 or newer.2. InstallationFirst, clone the repository to your local machine:git clone <your-repository-url>
-cd GUIapplicatioon
-Next, create and activate a virtual environment. This keeps the project's dependencies isolated.On macOS/Linux:python3 -m venv venv
-source venv/bin/activate
-On Windows:python -m venv venv
-.\venv\Scripts\activate
-Finally, install all the required packages from requirements.txt:pip install -r requirements.txt
-3. Running the ApplicationYou can run either the desktop or the web application.To Run the Desktop App:Execute the main.py script:python main.py
-The PyQt6 application window will appear.To Run the Web App:Execute the app.py script:python app.py
-Then, open your web browser and navigate to: https://www.google.com/search?q=http://127.0.0.1:5000⚙️ How It WorksData Ingestion: The user uploads a .tcx file through either the desktop or web UI.Parsing (backend_logic.py): The lxml library parses the XML file to extract trackpoints (time, power, heart rate, cadence, etc.) into a structured format.Visualization & Range Selection: The power data is plotted on a graph (pyqtgraph for desktop, Plotly.js for web). The user can zoom and pan to select a specific time segment for the video.Orchestration (orchestrate_video_generation in backend_logic.py): This central function manages the video creation process. It runs in a background thread to keep the UI responsive.Frame Generation (gauge_generator.py):The selected data segment is interpolated using NumPy to create a smooth data point for every single frame of the output video (e.g., at 30 FPS).For each frame, Pillow and OpenCV are used to draw the text, icons, and data values onto a blank image.Caching is used to optimize performance by reusing rendered text images (e.g., "250W") instead of redrawing them for every frame.Video Encoding: The generated frames are compiled into a final MP4 video file using OpenCV's VideoWriter.Completion: The user is notified, and a download link is provided (in the web UI) or a success message is shown (in the desktop UI).
+    └── index.html          # Frontend HTML and JavaScript
+```
+
+-----
+
+## Setup and Installation
+
+### Prerequisites
+
+  * Python 3.8+
+  * `pip` for package management
+
+### Instructions
+
+1.  **Clone the repository:**
+
+    ```bash
+    git clone https://github.com/your-username/GUIapplicatioon.git
+    cd GUIapplicatioon
+    ```
+
+2.  **Create and activate a virtual environment (recommended):**
+
+    ```bash
+    # For macOS/Linux
+    python3 -m venv venv
+    source venv/bin/activate
+
+    # For Windows
+    python -m venv venv
+    .\venv\Scripts\activate
+    ```
+
+3.  **Install the required packages:**
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+-----
+
+## How to Run
+
+1.  **Start the Flask web server:**
+    From the root directory of the project, run the following command:
+
+    ```bash
+    python app.py
+    ```
+
+2.  **Open the application in your browser:**
+    Navigate to the following URL in your web browser:
+    [http://127.0.0.1:5000](https://www.google.com/search?q=http://127.0.0.1:5000)
+
+-----
+
+## How to Use the Web App
+
+1.  **Upload File**: Click the "Choose File" button and select a valid `.tcx` file from your computer.
+2.  **Select Range**: Once the file is processed, an interactive graph of your power data will appear. Click and drag (or use your mouse wheel) to zoom and pan to the specific portion of the ride you want to feature. The start and end times below the graph will update automatically.
+3.  **Generate Video**: Click the "Generate Video" button. The progress bar will show the status of the video creation process.
+4.  **Download**: Once generation is complete, a download link will appear. Click it to save your `.mp4` video file.

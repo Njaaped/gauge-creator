@@ -27,7 +27,7 @@ def overlay_image_alpha(background, overlay, x, y):
     beta = 1.0 - alpha
     for c in range(3):
         background[y1:y2, x1:x2, c] = (alpha * overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, c] +
-                                      beta * background[y1:y2, x1:x2, c])
+                                       beta * background[y1:y2, x1:x2, c])
 
 def draw_text_with_outline_pil(text, font, fill_color, outline_color, stroke_width):
     dummy_draw = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
