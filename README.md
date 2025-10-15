@@ -93,6 +93,8 @@ The project has been simplified to contain only the web application components.
 
 ## How to Use the Web App
 
+![Application Screenshot](assets/readme/webapp.png)
+
 1.  **Upload File**: Click the "Choose File" button and select a valid `.tcx` file from your computer.
 2.  **Select Range**: Once the file is processed, an interactive graph of your power data will appear. Click and drag (or use your mouse wheel) to zoom and pan to the specific portion of the ride you want to feature. The start and end times below the graph will update automatically.
 3.  **Generate Video**: Click the "Generate Video" button. The progress bar will show the status of the video creation process.
